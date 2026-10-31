@@ -173,6 +173,44 @@
   }
 
   /**
+   * 元の合算値（例: 黄色い "16722" やアイコン等）の要素を非表示にする
+   * @param {HTMLElement} baseEl
+   */
+  function hideLegacyElements(baseEl) {
+    function hideIfLegacy(el) {
+      if (!el || el === baseEl || el.contains(baseEl) || el.classList.contains('anlas-viewer-container')) return;
+      const text = el.textContent.trim();
+      // "+" ボタン（購入ボタン）は保護
+      if (text === '+' || el.getAttribute('aria-label')?.includes('Add') || el.getAttribute('aria-label')?.includes('Buy')) {
+        return;
+      }
+      // 数値を含んでいるか、またはアイコンのみの兄弟要素（黄色い合算表示）
+      if (/[\d,]+/.test(text) || el.querySelector('svg, img') || el.tagName === 'SVG' || el.tagName === 'IMG') {
+        const icon = el.querySelector('svg, img') || (el.tagName === 'SVG' || el.tagName === 'IMG' ? el : null);
+        if (icon && !state.cachedIcon) {
+          state.cachedIcon = icon.cloneNode(true);
+        }
+        el.style.display = 'none';
+        el.setAttribute('data-anlas-hidden', 'true');
+      }
+    }
+
+    // 1. 直近の親要素内の兄弟要素をチェック
+    const parent = baseEl.parentElement;
+    if (parent) {
+      Array.from(parent.children).forEach(hideIfLegacy);
+
+      // 2. さらに上位のラッパー（角丸ボックス内）の兄弟要素もチェック
+      const grandParent = parent.parentElement;
+      if (grandParent && !['HEADER', 'NAV', 'BODY', 'MAIN'].includes(grandParent.tagName)) {
+        Array.from(grandParent.children).forEach(sibling => {
+          if (sibling !== parent) hideIfLegacy(sibling);
+        });
+      }
+    }
+  }
+
+  /**
    * DOMのAnlas表示を「定期 / 有償 / 合計」の2段センタリングレイアウトに書き換える
    *
    *   定期      有償       合計
@@ -216,6 +254,9 @@
         };
         targetEl.addEventListener('click', targetEl._anlasClickHandler);
       }
+
+      // 黄色い合算値（例: "16722" やアイコン等）の残存要素を非表示にする
+      hideLegacyElements(targetEl);
 
       if (container) {
         // 既存のコンテナの数値を差分更新（チラつき防止）
@@ -472,6 +513,11 @@
       tagged.title = '';
       tagged.style.cursor = '';
     }
+    // 非表示にした元の合算値要素を復元
+    document.querySelectorAll('[data-anlas-hidden="true"]').forEach(el => {
+      el.style.display = '';
+      el.removeAttribute('data-anlas-hidden');
+    });
     window.anlasViewerActive = false;
     delete window.anlasViewerRefresh;
     delete window.anlasViewerCleanup;
