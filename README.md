@@ -33,22 +33,6 @@ javascript:(function(){var s=document.createElement('script');s.src='https://mat
 
 ---
 
-## GitHub Pages の有効化手順
-
-本リポジトリのスクリプトをWeb上に公開するため、GitHub Pagesを有効化します。
-
-1. GitHubの **`matsumotoswitch/AnlasViewer`** リポジトリページを開きます。
-2. 上部メニューの **[Settings]** をクリックします。
-3. 左サイドバーの **[Pages]** をクリックします。
-4. **Build and deployment** の設定：
-   - **Source**: `Deploy from a branch` を選択
-   - **Branch**: `main` ブランチ、フォルダは `/ (root)` を選択
-   - **[Save]** をクリックします。
-5. 数分後、`https://matsumotoswitch.github.io/AnlasViewer/` に公開されます。
-   - このページを開くと、ブックマークバーにドラッグ＆ドロップしてワンタッチで追加できるボタンが用意されています。
-
----
-
 ## ファイル構成
 
 ```text
@@ -57,8 +41,6 @@ AnlasViewer/
 ├── index.html              # GitHub Pages用トップページ（ドラッグ＆ドロップ登録対応）
 └── README.md
 ```
-
-複雑なビルドツール（Node.js / npm）は不要です。`anlas-viewer.js` を直接編集してリポジトリにプッシュするだけで、GitHub Pages経由で即座に最新版が配信されます。
 
 ---
 
