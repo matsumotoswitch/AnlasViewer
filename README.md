@@ -52,7 +52,10 @@ AnlasViewer/
    `GET https://image.novelai.net/user/subscription`（予備: `/user/data`）を Bearerトークン付きで呼び出し、`trainingStepsLeft` の `fixedTrainingStepsLeft`（定期・毎月リセット）と `purchasedTrainingSteps`（有償）を取得します。※NovelAIの仕様上、残高系エンドポイントは `image.novelai.net` に集約されています。
 3. **DOM置換 & アイコン保護**
    画面上部から「Anlas:」を含む最深要素を特定。SVGコインアイコンがある場合はアイコンを残したままテキストのみを書き換えます。
-4. **SPA対応（MutationObserver）**
-   ページ遷移やAnlas消費でReactがDOMを再描画した場合、自動検知して再書き換えを行います。前回取得から5秒以上経過していればバックグラウンドで最新残高を再取得します。
+4. **SPA・Anlas消費への自動追従**
+   - **MutationObserver**: ページ遷移やReactの再描画によって元の「Anlas: 〇〇」に戻ったことを検知し、自動で最新残高を再取得・再書き換えします。
+   - **Fetchインターセプト**: 画像生成やAIリクエストの完了を自動検知し、画像生成直後に最新の残高をバックグラウンドで即座に再取得します。
+   - **クリックで即時更新**: ヘッダーの「定期: 〇〇 + 有償: 〇〇」の表示部分をクリックすると、いつでも手動で最新残高にリフレッシュできます。
+   - **タブ復帰時の自動同期**: 別タブから戻ってきた際にも最新情報を自動チェックします。
 5. **無限ループ・多重実行防止**
    書き換え中フラグ（`isMutating`）、カスタム属性（`data-anlas-view="true"`）、テキスト内容一致チェックの三重ガード。また `window.anlasViewerActive` により多重実行を防止し、2回目以降のクリックはリフレッシュとして機能します。
