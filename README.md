@@ -67,7 +67,7 @@ AnlasViewer/
 1. **認証トークン取得**
    `localStorage.getItem('session')` をJSONパースし、`auth_token` を安全に取得します。
 2. **API通信**
-   `https://api.novelai.net/user/information` を叩き、Bearerトークンを付与して `trainingStepsLeft` の `fixedTrainingStepsLeft`（定期）と `purchasedTrainingSteps`（有償）を取得します。
+   `GET https://api.novelai.net/user/subscription`（予備: `GET /user/data`）を Bearerトークン付きで呼び出し、`trainingStepsLeft` の `fixedTrainingStepsLeft`（定期・毎月リセット）と `purchasedTrainingSteps`（有償）を取得します。`GET /user/information` は仕様上 Anlas の内訳を含まないため使用しません。失敗時はステータスとレスポンス本文をコンソールに出力します。
 3. **DOM置換 & アイコン保護**
    画面上部から「Anlas:」を含む最深要素を特定。SVGコインアイコンがある場合はアイコンを残したままテキストのみを書き換えます。
 4. **SPA対応（MutationObserver）**

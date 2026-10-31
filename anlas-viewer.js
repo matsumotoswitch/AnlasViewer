@@ -7,7 +7,7 @@
  * 主な機能・特徴:
  * 1. 実行形式: ブックマークレット（1クリックで現在のタブに常駐）
  * 2. 認証情報の取得: localStorage（'session' キーなど）からNovelAIの認証トークン（auth_token）を取得
- * 3. API通信: REST API（ https://api.novelai.net/user/information ）をFetchで叩き、Bearerトークンを付与して「定期購入分」「有償分」を取得
+ * 3. API通信: NovelAI REST API（GET /user/subscription、予備で GET /user/data）をFetchで叩き、Bearerトークンを付与して「定期購入分」「有償分」を取得
  * 4. DOMの書き換え: 画面上部の「Anlas: 〇〇」要素を「定期: (定) + 有償: (有)」に書き換え（アイコン保持対応）
  * 5. SPA対応: MutationObserverで画面遷移やAnlas消費に伴うReactの再描画を検知し自動追従
  * 6. 無限ループ防止: 書き換え中フラグ + data-anlas-view="true" 属性 + 値一致チェックによる三重ガード
@@ -36,7 +36,9 @@
     lastFetchedAt: 0,
     isMutating: false,
     debounceTimer: null,
-    observer: null
+    observer: null,
+    fetching: false,
+    failCount: 0
   };
 
   /**
@@ -68,34 +70,69 @@
    * @param {string} token
    * @returns {Promise<{fixed: number, purchased: number}>}
    */
-  async function fetchAnlasInfo(token) {
-    const url = 'https://api.novelai.net/user/information';
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
+  // 問い合わせ先エンドポイント（API仕様 https://api.novelai.net/docs に基づく）
+  // - GET /user/subscription : SubscriptionResponse.trainingStepsLeft に内訳あり（本命）
+  // - GET /user/data         : UserAccountDataResponse.subscription.trainingStepsLeft に内訳あり（予備）
+  // ※ GET /user/information (AccountInformationResponse) はメール認証・トライアル等の情報のみで、
+  //   Anlas の内訳は含まれないため使用しない
+  const ENDPOINTS = [
+    'https://api.novelai.net/user/subscription',
+    'https://api.novelai.net/user/data'
+  ];
+  let preferredEndpoint = null; // 一度成功したエンドポイントを記憶
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} (${response.statusText})`);
+  /**
+   * レスポンスJSONから定期分・有償分を抽出（見つからなければ null）
+   * fixedTrainingStepsLeft: 定期購入分（サブスク付与枠）
+   * purchasedTrainingSteps: 有償分（追加購入枠）
+   */
+  function extractAnlas(data) {
+    if (!data || typeof data !== 'object') return null;
+    const steps = data.trainingStepsLeft || data.subscription?.trainingStepsLeft;
+    if (steps && typeof steps.fixedTrainingStepsLeft === 'number' && typeof steps.purchasedTrainingSteps === 'number') {
+      return { fixed: steps.fixedTrainingStepsLeft, purchased: steps.purchasedTrainingSteps };
+    }
+    return null;
+  }
+
+  /**
+   * REST APIからAnlasの定期購入分・有償分を取得
+   * @param {string} token
+   * @returns {Promise<{fixed: number, purchased: number}>}
+   */
+  async function fetchAnlasInfo(token) {
+    const targets = preferredEndpoint
+      ? [preferredEndpoint, ...ENDPOINTS.filter(u => u !== preferredEndpoint)]
+      : ENDPOINTS;
+    const failures = [];
+
+    for (const url of targets) {
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+          // 原因調査のためレスポンス本文も記録
+          const body = await response.text().catch(() => '');
+          failures.push(`${url} -> HTTP ${response.status} ${body.slice(0, 200)}`);
+          continue;
+        }
+
+        const data = await response.json();
+        const result = extractAnlas(data);
+        if (result) {
+          preferredEndpoint = url;
+          return result;
+        }
+        failures.push(`${url} -> 200 OK だが内訳フィールドなし (keys: ${Object.keys(data).join(', ')})`);
+      } catch (err) {
+        failures.push(`${url} -> ${err.message}`);
+      }
     }
 
-    const data = await response.json();
-
-    // trainingStepsLeft の構造から定期購入分と有償分を抽出
-    // fixedTrainingStepsLeft: 定期購入分（サブスク付与枠）
-    // purchasedTrainingSteps: 有償分（追加購入枠）
-    const steps = data.subscription?.trainingStepsLeft || data.trainingStepsLeft || {};
-    const fixed = typeof steps.fixedTrainingStepsLeft === 'number'
-      ? steps.fixedTrainingStepsLeft
-      : (data.subscriptionAnlas ?? 0);
-    const purchased = typeof steps.purchasedTrainingSteps === 'number'
-      ? steps.purchasedTrainingSteps
-      : (data.purchasedAnlas ?? 0);
-
-    return { fixed, purchased };
+    throw new Error('全エンドポイントで取得失敗:\n  ' + failures.join('\n  '));
   }
 
   /**
@@ -214,29 +251,36 @@
    * @param {boolean} silent ログ出力を抑制するかどうか
    */
   async function updateAnlasData(silent = false) {
+    // 同時多発リクエストの防止
+    if (state.fetching) return false;
+
     const token = getAuthToken();
     if (!token) {
       console.error('[AnlasViewer] エラー: 認証トークン（auth_token）を取得できませんでした。NovelAIにログインしているか確認してください。');
-      window.anlasViewerActive = false;
-      return;
+      return false;
     }
 
+    state.fetching = true;
+    // 成否に関わらず試行時刻を記録（失敗時にDOM変化のたびに再リクエストする連打を防ぐ）
+    state.lastFetchedAt = Date.now();
     try {
       const { fixed, purchased } = await fetchAnlasInfo(token);
       state.fixed = fixed;
       state.purchased = purchased;
-      state.lastFetchedAt = Date.now();
+      state.failCount = 0;
 
       renderAnlasView();
 
       if (!silent) {
         console.info(`[AnlasViewer] 残高取得成功: 定期 = ${fixed.toLocaleString()}, 有償 = ${purchased.toLocaleString()} (合計 = ${(fixed + purchased).toLocaleString()})`);
       }
+      return true;
     } catch (err) {
-      console.error('[AnlasViewer] エラー: APIからのAnlas情報取得に失敗しました:', err);
-      if (state.fixed === null) {
-        window.anlasViewerActive = false;
-      }
+      state.failCount++;
+      console.error('[AnlasViewer] エラー: APIからのAnlas情報取得に失敗しました:', err.message);
+      return false;
+    } finally {
+      state.fetching = false;
     }
   }
 
@@ -262,8 +306,10 @@
 
       if (isOriginal) {
         // 画像生成等でAnlasが消費された可能性を考慮し、前回取得から5秒以上経過していればAPIを再取得
+        // 失敗が続いている場合は待機時間を延ばす（5秒 → 最大5分）
         const now = Date.now();
-        if (now - state.lastFetchedAt > 5000) {
+        const interval = Math.min(5000 * Math.pow(2, state.failCount), 300000);
+        if (now - state.lastFetchedAt > interval) {
           updateAnlasData(true);
         } else {
           // 直近の取得であればキャッシュ値で即座に再書き換え
@@ -281,8 +327,13 @@
   async function init() {
     console.info('[AnlasViewer] 起動中...');
 
-    // 初回データ取得
-    await updateAnlasData(false);
+    // 初回データ取得（失敗したら常駐せずに中断）
+    const ok = await updateAnlasData(false);
+    if (!ok) {
+      console.error('[AnlasViewer] 初回取得に失敗したため処理を中断しました。上記のエラー内容を確認してください。');
+      window.anlasViewerActive = false;
+      return;
+    }
 
     // MutationObserverでDOMの変更（SPAの画面遷移・再描画）を監視
     state.observer = new MutationObserver(handleMutations);
