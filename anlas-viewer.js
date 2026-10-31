@@ -42,7 +42,8 @@
     fetching: false,
     failCount: 0,
     originalFetch: null,
-    visibilityListener: null
+    visibilityListener: null,
+    cachedIcon: null
   };
 
   /**
@@ -172,7 +173,14 @@
   }
 
   /**
-   * DOMのAnlas表示を「定期: (定) + 有償: (有)」に書き換える
+   * DOMのAnlas表示を「定期 / 有償 / 合計」の2段センタリングレイアウトに書き換える
+   *
+   *   定期      有償       合計
+   *  6,880  +  9,842  =  16,722  [アイコン]
+   *
+   * 各カラムを縦方向Flex（align-items: center）にすることで、
+   * 値が「0」等の短い場合でもラベルの横幅内で綺麗に中央揃えになります。
+   *
    * @returns {boolean} 書き換えに成功したかどうか
    */
   function renderAnlasView() {
@@ -183,16 +191,16 @@
 
     const formattedFixed = state.fixed.toLocaleString();
     const formattedPurchased = state.purchased.toLocaleString();
-    const formattedTotal = (state.fixed + state.purchased).toLocaleString();
-    const expectedText = `定期: ${formattedFixed} + 有償: ${formattedPurchased}`;
+    const total = state.fixed + state.purchased;
+    const formattedTotal = total.toLocaleString();
 
-    // 無限ループ防止チェック: 既に書き換え済みかつテキストが一致している場合はスキップ
-    const currentAttr = targetEl.getAttribute('data-anlas-view');
-    if (currentAttr === 'true' && targetEl.textContent.trim().includes(expectedText)) {
+    let container = targetEl.querySelector('.anlas-viewer-container');
+
+    // 既に当スクリプトのコンテナが存在し、数値も一致していればスキップ（無限ループ防止）
+    if (container && container.dataset.fixed === formattedFixed && container.dataset.purchased === formattedPurchased) {
       return true;
     }
 
-    // 書き換え処理（自己イベント検知ガードフラグをセット）
     state.isMutating = true;
     try {
       targetEl.setAttribute('data-anlas-view', 'true');
@@ -209,28 +217,71 @@
         targetEl.addEventListener('click', targetEl._anlasClickHandler);
       }
 
-      // アイコン（SVG等）が共存している場合はアイコンを保護
-      const hasIcon = targetEl.querySelector('svg, img');
-      if (hasIcon) {
-        let textReplaced = false;
-        for (const child of targetEl.childNodes) {
-          if (child.nodeType === Node.TEXT_NODE && (/Anlas/i.test(child.nodeValue) || /定期/i.test(child.nodeValue))) {
-            child.nodeValue = ' ' + expectedText;
-            textReplaced = true;
-            break;
-          }
-        }
-        if (!textReplaced) {
-          let span = targetEl.querySelector('.anlas-viewer-text');
-          if (!span) {
-            span = document.createElement('span');
-            span.className = 'anlas-viewer-text';
-            targetEl.appendChild(span);
-          }
-          span.textContent = ' ' + expectedText;
-        }
+      if (container) {
+        // 既存のコンテナの数値を差分更新（チラつき防止）
+        const valFixed = container.querySelector('.anlas-val-fixed');
+        const valPurchased = container.querySelector('.anlas-val-purchased');
+        const valTotal = container.querySelector('.anlas-val-total');
+        if (valFixed) valFixed.textContent = formattedFixed;
+        if (valPurchased) valPurchased.textContent = formattedPurchased;
+        if (valTotal) valTotal.textContent = formattedTotal;
+        container.dataset.fixed = formattedFixed;
+        container.dataset.purchased = formattedPurchased;
       } else {
-        targetEl.textContent = expectedText;
+        // アイコン（SVG等）があれば退避して保持
+        const iconNode = targetEl.querySelector('svg, img');
+        if (iconNode) {
+          state.cachedIcon = iconNode.cloneNode(true);
+        }
+        const iconClone = iconNode
+          ? iconNode.cloneNode(true)
+          : (state.cachedIcon ? state.cachedIcon.cloneNode(true) : null);
+
+        // targetEl の既存テキスト（元の合算値テキストなど）をクリア
+        targetEl.innerHTML = '';
+
+        container = document.createElement('div');
+        container.className = 'anlas-viewer-container';
+        container.dataset.fixed = formattedFixed;
+        container.dataset.purchased = formattedPurchased;
+        container.style.cssText = [
+          'display: inline-flex',
+          'align-items: center',
+          'gap: 8px',
+          'user-select: none',
+          'line-height: 1.15',
+          'vertical-align: middle',
+          'padding: 1px 0'
+        ].join(';');
+
+        // 2段センタリング構造:
+        // 各カラムを flex-direction:column; align-items:center にすることで、
+        // 上段ラベルと下段数値が常に中央揃えになり、数値が「0」の場合もラベル幅の中でセンタリングされる
+        container.innerHTML = `
+          <div class="anlas-col" style="display:inline-flex; flex-direction:column; align-items:center; justify-content:center; min-width:0;">
+            <span style="font-size:0.68em; line-height:1.1; font-weight:500; opacity:0.75; letter-spacing:0.04em;">定期</span>
+            <span class="anlas-val-fixed" style="font-size:0.95em; line-height:1.2; font-weight:700;">${formattedFixed}</span>
+          </div>
+          <div style="display:inline-flex; align-items:flex-end; font-size:0.85em; font-weight:600; opacity:0.6; margin-top:auto; padding-bottom:2px;">+</div>
+          <div class="anlas-col" style="display:inline-flex; flex-direction:column; align-items:center; justify-content:center; min-width:0;">
+            <span style="font-size:0.68em; line-height:1.1; font-weight:500; opacity:0.75; letter-spacing:0.04em;">有償</span>
+            <span class="anlas-val-purchased" style="font-size:0.95em; line-height:1.2; font-weight:700;">${formattedPurchased}</span>
+          </div>
+          <div style="display:inline-flex; align-items:flex-end; font-size:0.85em; font-weight:600; opacity:0.6; margin-top:auto; padding-bottom:2px;">=</div>
+          <div class="anlas-col" style="display:inline-flex; flex-direction:column; align-items:center; justify-content:center; min-width:0;">
+            <span style="font-size:0.68em; line-height:1.1; font-weight:500; opacity:0.75; letter-spacing:0.04em;">合計</span>
+            <span class="anlas-val-total" style="font-size:0.95em; line-height:1.2; font-weight:700;">${formattedTotal}</span>
+          </div>
+        `;
+
+        if (iconClone) {
+          const iconWrapper = document.createElement('span');
+          iconWrapper.style.cssText = 'display:inline-flex; align-items:center; margin-left:2px;';
+          iconWrapper.appendChild(iconClone);
+          container.appendChild(iconWrapper);
+        }
+
+        targetEl.appendChild(container);
       }
     } finally {
       Promise.resolve().then(() => {
@@ -297,9 +348,10 @@
       const el = findAnlasElement();
       if (!el) return;
 
-      // 画面上に生の「Anlas:」が出現しているか、または「定期:」が含まれていない（Reactが再描画した）か判定
+      // 画面上に生の「Anlas:」が出現しているか、またはコンテナが外れた（Reactが再描画した）か判定
       const text = el.textContent || '';
-      const isReverted = /Anlas\s*:/i.test(text) || !text.includes('定期:');
+      const hasContainer = !!el.querySelector('.anlas-viewer-container');
+      const isReverted = /Anlas\s*:/i.test(text) || !hasContainer || !text.includes('定期');
 
       if (isReverted) {
         // Reactの再描画を検知した場合、直近2秒以内にフェッチしていなければAPIから最新残高を再取得
