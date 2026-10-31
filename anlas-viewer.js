@@ -70,14 +70,13 @@
    * @param {string} token
    * @returns {Promise<{fixed: number, purchased: number}>}
    */
-  // 問い合わせ先エンドポイント（API仕様 https://api.novelai.net/docs に基づく）
-  // - GET /user/subscription : SubscriptionResponse.trainingStepsLeft に内訳あり（本命）
-  // - GET /user/data         : UserAccountDataResponse.subscription.trainingStepsLeft に内訳あり（予備）
-  // ※ GET /user/information (AccountInformationResponse) はメール認証・トライアル等の情報のみで、
-  //   Anlas の内訳は含まれないため使用しない
+  // 問い合わせ先エンドポイント
+  // NovelAIの仕様変更に伴い、残高・サブスク系エンドポイントは image.novelai.net に移行されています。
+  // （api.novelai.net は "update to the image URL" というエラーメッセージとともに 400 を返す仕様）
   const ENDPOINTS = [
-    'https://api.novelai.net/user/subscription',
-    'https://api.novelai.net/user/data'
+    'https://image.novelai.net/user/subscription',
+    'https://image.novelai.net/user/data',
+    'https://api.novelai.net/user/subscription'
   ];
   let preferredEndpoint = null; // 一度成功したエンドポイントを記憶
 
