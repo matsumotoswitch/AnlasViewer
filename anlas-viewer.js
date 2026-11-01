@@ -136,17 +136,35 @@
    * @returns {HTMLElement|null}
    */
   function findAnlasElement() {
-    // 1. まず画面上に生の「Anlas:」表示（Reactによる再描画・新要素挿入）が出現していないか走査
-    const allElements = document.querySelectorAll('header *, nav *, [role="banner"] *, div, span, p, a, button');
+    // 既に当スクリプトのコンテナがある場合、現在も画面最上部（ヘッダー領域）にあるか確認
+    const tagged = document.querySelector('[data-anlas-view="true"]');
+    if (tagged && document.body.contains(tagged)) {
+      const rect = tagged.getBoundingClientRect();
+      if (rect.top >= 0 && rect.top < 80) {
+        return tagged;
+      }
+    }
+
+    // 画面最上部（ヘッダー領域: top < 80px）にある要素のみを走査（購入画面等は完全除外）
+    const allElements = document.querySelectorAll('div, span, p, a, button');
     const freshCandidates = [];
 
     for (let i = 0; i < allElements.length; i++) {
       const el = allElements[i];
       if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(el.tagName)) continue;
 
+      // モーダルや購入ダイアログの内部は絶対に除外
+      if (el.closest('[role="dialog"], .modal, [class*="modal"], [class*="Modal"], [class*="popup"], [class*="Popup"]')) {
+        continue;
+      }
+
+      const rect = el.getBoundingClientRect();
+      // 画面最上部のヘッダーバー内（top < 80px）のみを対象とする
+      if (rect.top < 0 || rect.top > 80) continue;
+
       const text = el.textContent || '';
-      if (/Anlas\s*:/i.test(text)) {
-        // 子要素に「Anlas:」を含むものが無い＝最も深い要素
+      // "Anlas:" または "Anlas :" を含む要素（購入画面の「定期購入のAnlas:」などの長文は除外）
+      if (/Anlas\s*:/i.test(text) && text.length < 35) {
         const hasChildMatch = Array.from(el.children).some(child => /Anlas\s*:/i.test(child.textContent || ''));
         if (!hasChildMatch) {
           freshCandidates.push(el);
@@ -155,16 +173,9 @@
     }
 
     if (freshCandidates.length > 0) {
-      // 画面上部（ビューポート Y < 200）にあるものを最優先
-      const topCandidate = freshCandidates.find(el => {
-        const rect = el.getBoundingClientRect();
-        return el.closest('header, nav, [role="banner"]') || (rect.top >= 0 && rect.top < 200);
-      });
-      return topCandidate || freshCandidates[0];
+      return freshCandidates[0];
     }
 
-    // 2. 生の「Anlas:」がなければ、既に書き換え済みのタグ付き要素を返す（現在DOMツリー上に存在するもの）
-    const tagged = document.querySelector('[data-anlas-view="true"]');
     if (tagged && document.body.contains(tagged)) {
       return tagged;
     }
@@ -173,45 +184,65 @@
   }
 
   /**
-   * 元の合算値（ヘッダー内の黄色い "16722 💎"）のみをピンポイントで非表示にする
-   * ※ 購入モーダル（Purchase Anlas）や他の画面要素には絶対に影響を与えないよう厳格に保護
+   * ヘッダー内の黄色い合算値（例: "15470 💎"）のみをピンポイントで非表示にする
+   * ※ 購入画面（Purchase Anlas）などヘッダー以外の要素は絶対に触らない
    * @param {HTMLElement} baseEl
    */
   function hideLegacyElements(baseEl) {
-      if (!baseEl || !baseEl.parentElement) return;
+    if (!baseEl) return;
 
-      // ヘッダー・ナビゲーション領域外の要素は絶対に触らない
-      if (!baseEl.closest('header, nav, [role="banner"]')) return;
+    // baseEl が画面最上部（ヘッダー領域: top < 80px）にあることを確認
+    const baseRect = baseEl.getBoundingClientRect();
+    if (baseRect.top < 0 || baseRect.top > 80) return;
 
-      // 対象は baseEl と同一親要素（ヘッダーのボタン枠）の直接の兄弟要素だけに限定
-      const parent = baseEl.parentElement;
-      Array.from(parent.children).forEach(el => {
-        if (!el || el === baseEl || el.contains(baseEl) || el.classList.contains('anlas-viewer-container')) return;
-
-        // モーダルやダイアログ、購入画面の要素は完全に除外
-        if (el.closest('[role="dialog"], .modal, [class*="modal"], [class*="popup"]')) return;
-
-        const text = el.textContent.trim();
-
-          // "+" ボタン（購入ボタン）や購入関連テキストは保護
-          if (text === '+' || /Purchase|購入|USD|ドル|Add|Buy/i.test(text) || el.getAttribute('aria-label')?.includes('Add')) {
-            return;
-          }
-
-            // 数値とアイコンだけで構成される要素（例: "16722" や "16722 💎"）のみを非表示対象とする
-            const hasDigits = /[\d,]{2,}/.test(text);
-            const isPureNumberOrIcon = text.replace(/[\d,\s]/g, '').length === 0 || el.querySelector('svg, img') !== null;
-
-            if (hasDigits && isPureNumberOrIcon) {
-              const icon = el.querySelector('svg, img') || (el.tagName === 'SVG' || el.tagName === 'IMG' ? el : null);
-              if (icon && !state.cachedIcon) {
-                state.cachedIcon = icon.cloneNode(true);
-              }
-              el.style.display = 'none';
-              el.setAttribute('data-anlas-hidden', 'true');
-            }
-        });
+    // モーダルやダイアログ内部であれば絶対に実行しない
+    if (baseEl.closest('[role="dialog"], .modal, [class*="modal"], [class*="Modal"], [class*="popup"], [class*="Popup"]')) {
+      return;
     }
+
+    // 共通の非表示判定処理
+    function checkAndHide(el) {
+      if (!el || el === baseEl || el.contains(baseEl) || el.classList.contains('anlas-viewer-container')) return;
+      if (el.closest('[role="dialog"], .modal, [class*="modal"], [class*="Modal"], [class*="popup"], [class*="Popup"]')) return;
+
+      const rect = el.getBoundingClientRect();
+      // 画面上部（ヘッダーバー内）以外の要素は触らない
+      if (rect.top < 0 || rect.top > 80) return;
+
+      const text = el.textContent.trim();
+
+      // "+" ボタン（購入ボタン）やメニューアイコン（三本線）は保護
+      if (text === '+' || text === '≡' || text === '☰' || el.getAttribute('aria-label')?.includes('Add')) {
+        return;
+      }
+      // "Purchase" や "購入"、"USD" などを含む要素は保護
+      if (/Purchase|購入|USD|ドル|定期|有償|合計/i.test(text)) {
+        return;
+      }
+
+      // 数値のみ（例: "15470"）、またはアイコン要素（SVG/IMG）、または数値+アイコン要素
+      const isPureDigits = /^\s*[\d,]+\s*$/.test(text);
+      const isIconOnly = el.tagName === 'SVG' || el.tagName === 'IMG' || (text.length === 0 && el.querySelector('svg, img') !== null);
+      const isDigitsWithIcon = /[\d,]{2,}/.test(text) && (text.replace(/[\d,\s]/g, '').length === 0 || el.querySelector('svg, img') !== null);
+
+      if (isPureDigits || isIconOnly || isDigitsWithIcon) {
+        const icon = el.querySelector('svg, img') || (el.tagName === 'SVG' || el.tagName === 'IMG' ? el : null);
+        if (icon && !state.cachedIcon) {
+          state.cachedIcon = icon.cloneNode(true);
+        }
+        el.style.display = 'none';
+        el.setAttribute('data-anlas-hidden', 'true');
+      }
+    }
+
+    // baseEl の直接の親、およびその親（角丸ボックス）の子要素をチェック
+    let current = baseEl.parentElement;
+    for (let depth = 0; depth < 2 && current; depth++) {
+      if (['BODY', 'HTML', 'MAIN'].includes(current.tagName)) break;
+      Array.from(current.children).forEach(checkAndHide);
+      current = current.parentElement;
+    }
+  }
 
     /**
      * DOMのAnlas表示を「定期 / 有償 / 合計」の2段センタリングレイアウトに書き換える
@@ -237,6 +268,9 @@
 
       let container = targetEl.querySelector('.anlas-viewer-container');
 
+      // 黄色い合算値（例: "15470 💎"）の残存要素があれば確実に非表示にする
+      hideLegacyElements(targetEl);
+
       // 既に当スクリプトのコンテナが存在し、数値も一致していればスキップ（無限ループ防止）
       if (container && container.dataset.fixed === formattedFixed && container.dataset.purchased === formattedPurchased) {
         return true;
@@ -250,17 +284,14 @@
 
         // クリック時に残高を最新化（※NovelAI本来の購入モーダル表示イベントを妨げないよう伝播は止めない）
         if (!targetEl._anlasClickHandler) {
-            targetEl._anlasClickHandler = () => {
-              console.info('[AnlasViewer] クリックを検知。残高を最新化します...');
-              updateAnlasData(true);
-            };
-            targetEl.addEventListener('click', targetEl._anlasClickHandler);
-          }
+          targetEl._anlasClickHandler = () => {
+            console.info('[AnlasViewer] クリックを検知。残高を最新化します...');
+            updateAnlasData(true);
+          };
+          targetEl.addEventListener('click', targetEl._anlasClickHandler);
+        }
 
-          // 黄色い合算値（例: "16722" やアイコン等）の残存要素を非表示にする
-          hideLegacyElements(targetEl);
-
-          if (container) {
+        if (container) {
             // 既存のコンテナの数値を差分更新（チラつき防止）
             const valFixed = container.querySelector('.anlas-val-fixed');
             const valPurchased = container.querySelector('.anlas-val-purchased');
