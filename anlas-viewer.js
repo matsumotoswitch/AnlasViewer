@@ -173,132 +173,134 @@
   }
 
   /**
-   * 元の合算値（例: 黄色い "16722" やアイコン等）の要素を非表示にする
+   * 元の合算値（ヘッダー内の黄色い "16722 💎"）のみをピンポイントで非表示にする
+   * ※ 購入モーダル（Purchase Anlas）や他の画面要素には絶対に影響を与えないよう厳格に保護
    * @param {HTMLElement} baseEl
    */
   function hideLegacyElements(baseEl) {
-    function hideIfLegacy(el) {
-      if (!el || el === baseEl || el.contains(baseEl) || el.classList.contains('anlas-viewer-container')) return;
-      const text = el.textContent.trim();
-      // "+" ボタン（購入ボタン）は保護
-      if (text === '+' || el.getAttribute('aria-label')?.includes('Add') || el.getAttribute('aria-label')?.includes('Buy')) {
-        return;
-      }
-      // 数値を含んでいるか、またはアイコンのみの兄弟要素（黄色い合算表示）
-      if (/[\d,]+/.test(text) || el.querySelector('svg, img') || el.tagName === 'SVG' || el.tagName === 'IMG') {
-        const icon = el.querySelector('svg, img') || (el.tagName === 'SVG' || el.tagName === 'IMG' ? el : null);
-        if (icon && !state.cachedIcon) {
-          state.cachedIcon = icon.cloneNode(true);
-        }
-        el.style.display = 'none';
-        el.setAttribute('data-anlas-hidden', 'true');
-      }
-    }
+      if (!baseEl || !baseEl.parentElement) return;
 
-    // 1. 直近の親要素内の兄弟要素をチェック
-    const parent = baseEl.parentElement;
-    if (parent) {
-      Array.from(parent.children).forEach(hideIfLegacy);
+      // ヘッダー・ナビゲーション領域外の要素は絶対に触らない
+      if (!baseEl.closest('header, nav, [role="banner"]')) return;
 
-      // 2. さらに上位のラッパー（角丸ボックス内）の兄弟要素もチェック
-      const grandParent = parent.parentElement;
-      if (grandParent && !['HEADER', 'NAV', 'BODY', 'MAIN'].includes(grandParent.tagName)) {
-        Array.from(grandParent.children).forEach(sibling => {
-          if (sibling !== parent) hideIfLegacy(sibling);
+      // 対象は baseEl と同一親要素（ヘッダーのボタン枠）の直接の兄弟要素だけに限定
+      const parent = baseEl.parentElement;
+      Array.from(parent.children).forEach(el => {
+        if (!el || el === baseEl || el.contains(baseEl) || el.classList.contains('anlas-viewer-container')) return;
+
+        // モーダルやダイアログ、購入画面の要素は完全に除外
+        if (el.closest('[role="dialog"], .modal, [class*="modal"], [class*="popup"]')) return;
+
+        const text = el.textContent.trim();
+
+          // "+" ボタン（購入ボタン）や購入関連テキストは保護
+          if (text === '+' || /Purchase|購入|USD|ドル|Add|Buy/i.test(text) || el.getAttribute('aria-label')?.includes('Add')) {
+            return;
+          }
+
+            // 数値とアイコンだけで構成される要素（例: "16722" や "16722 💎"）のみを非表示対象とする
+            const hasDigits = /[\d,]{2,}/.test(text);
+            const isPureNumberOrIcon = text.replace(/[\d,\s]/g, '').length === 0 || el.querySelector('svg, img') !== null;
+
+            if (hasDigits && isPureNumberOrIcon) {
+              const icon = el.querySelector('svg, img') || (el.tagName === 'SVG' || el.tagName === 'IMG' ? el : null);
+              if (icon && !state.cachedIcon) {
+                state.cachedIcon = icon.cloneNode(true);
+              }
+              el.style.display = 'none';
+              el.setAttribute('data-anlas-hidden', 'true');
+            }
         });
-      }
-    }
-  }
-
-  /**
-   * DOMのAnlas表示を「定期 / 有償 / 合計」の2段センタリングレイアウトに書き換える
-   *
-   *   定期      有償       合計
-   *  6,880  +  9,842  =  16,722  [アイコン]
-   *
-   * 各カラムを縦方向Flex（align-items: center）にすることで、
-   * 値が「0」等の短い場合でもラベルの横幅内で綺麗に中央揃えになります。
-   *
-   * @returns {boolean} 書き換えに成功したかどうか
-   */
-  function renderAnlasView() {
-    if (state.fixed === null || state.purchased === null) return false;
-
-    const targetEl = findAnlasElement();
-    if (!targetEl) return false;
-
-    const formattedFixed = state.fixed.toLocaleString();
-    const formattedPurchased = state.purchased.toLocaleString();
-    const total = state.fixed + state.purchased;
-    const formattedTotal = total.toLocaleString();
-
-    let container = targetEl.querySelector('.anlas-viewer-container');
-
-    // 既に当スクリプトのコンテナが存在し、数値も一致していればスキップ（無限ループ防止）
-    if (container && container.dataset.fixed === formattedFixed && container.dataset.purchased === formattedPurchased) {
-      return true;
     }
 
-    state.isMutating = true;
-    try {
-      targetEl.setAttribute('data-anlas-view', 'true');
-      targetEl.title = `Anlas合計: ${formattedTotal} (定期: ${formattedFixed} / 有償: ${formattedPurchased})\nクリックで最新残高を再取得`;
-      targetEl.style.cursor = 'pointer';
+    /**
+     * DOMのAnlas表示を「定期 / 有償 / 合計」の2段センタリングレイアウトに書き換える
+     *
+     *   定期      有償       合計
+     *  6,880  +  9,842  =  16,722  [アイコン]
+     *
+     * 各カラムを縦方向Flex（align-items: center）にすることで、
+     * 値が「0」等の短い場合でもラベルの横幅内で綺麗に中央揃えになります。
+     *
+     * @returns {boolean} 書き換えに成功したかどうか
+     */
+    function renderAnlasView() {
+      if (state.fixed === null || state.purchased === null) return false;
 
-      // クリックで即時リフレッシュできるようにハンドラを登録
-      if (!targetEl._anlasClickHandler) {
-        targetEl._anlasClickHandler = (e) => {
-          e.stopPropagation();
-          console.info('[AnlasViewer] クリックを検知。残高を再取得します...');
-          updateAnlasData(false);
-        };
-        targetEl.addEventListener('click', targetEl._anlasClickHandler);
+      const targetEl = findAnlasElement();
+      if (!targetEl) return false;
+
+      const formattedFixed = state.fixed.toLocaleString();
+      const formattedPurchased = state.purchased.toLocaleString();
+      const total = state.fixed + state.purchased;
+      const formattedTotal = total.toLocaleString();
+
+      let container = targetEl.querySelector('.anlas-viewer-container');
+
+      // 既に当スクリプトのコンテナが存在し、数値も一致していればスキップ（無限ループ防止）
+      if (container && container.dataset.fixed === formattedFixed && container.dataset.purchased === formattedPurchased) {
+        return true;
       }
 
-      // 黄色い合算値（例: "16722" やアイコン等）の残存要素を非表示にする
-      hideLegacyElements(targetEl);
+      state.isMutating = true;
+      try {
+        targetEl.setAttribute('data-anlas-view', 'true');
+        targetEl.title = `Anlas合計: ${formattedTotal} (定期: ${formattedFixed} / 有償: ${formattedPurchased})\nクリックで最新残高を再取得`;
+        targetEl.style.cursor = 'pointer';
 
-      if (container) {
-        // 既存のコンテナの数値を差分更新（チラつき防止）
-        const valFixed = container.querySelector('.anlas-val-fixed');
-        const valPurchased = container.querySelector('.anlas-val-purchased');
-        const valTotal = container.querySelector('.anlas-val-total');
-        if (valFixed) valFixed.textContent = formattedFixed;
-        if (valPurchased) valPurchased.textContent = formattedPurchased;
-        if (valTotal) valTotal.textContent = formattedTotal;
-        container.dataset.fixed = formattedFixed;
-        container.dataset.purchased = formattedPurchased;
-      } else {
-        // アイコン（SVG等）があれば退避して保持
-        const iconNode = targetEl.querySelector('svg, img');
-        if (iconNode) {
-          state.cachedIcon = iconNode.cloneNode(true);
-        }
-        const iconClone = iconNode
-          ? iconNode.cloneNode(true)
-          : (state.cachedIcon ? state.cachedIcon.cloneNode(true) : null);
+        // クリック時に残高を最新化（※NovelAI本来の購入モーダル表示イベントを妨げないよう伝播は止めない）
+        if (!targetEl._anlasClickHandler) {
+            targetEl._anlasClickHandler = () => {
+              console.info('[AnlasViewer] クリックを検知。残高を最新化します...');
+              updateAnlasData(true);
+            };
+            targetEl.addEventListener('click', targetEl._anlasClickHandler);
+          }
 
-        // targetEl の既存テキスト（元の合算値テキストなど）をクリア
-        targetEl.innerHTML = '';
+          // 黄色い合算値（例: "16722" やアイコン等）の残存要素を非表示にする
+          hideLegacyElements(targetEl);
 
-        container = document.createElement('div');
-        container.className = 'anlas-viewer-container';
-        container.dataset.fixed = formattedFixed;
-        container.dataset.purchased = formattedPurchased;
-        container.style.cssText = [
-          'display: inline-flex',
-          'align-items: center',
-          'gap: 8px',
-          'user-select: none',
-          'line-height: 1.15',
-          'vertical-align: middle',
-          'padding: 1px 0'
-        ].join(';');
+          if (container) {
+            // 既存のコンテナの数値を差分更新（チラつき防止）
+            const valFixed = container.querySelector('.anlas-val-fixed');
+            const valPurchased = container.querySelector('.anlas-val-purchased');
+            const valTotal = container.querySelector('.anlas-val-total');
+            if (valFixed) valFixed.textContent = formattedFixed;
+            if (valPurchased) valPurchased.textContent = formattedPurchased;
+            if (valTotal) valTotal.textContent = formattedTotal;
+            container.dataset.fixed = formattedFixed;
+            container.dataset.purchased = formattedPurchased;
+          } else {
+            // アイコン（SVG等）があれば退避して保持
+            const iconNode = targetEl.querySelector('svg, img');
+            if (iconNode) {
+              state.cachedIcon = iconNode.cloneNode(true);
+            }
+            const iconClone = iconNode
+              ? iconNode.cloneNode(true)
+              : (state.cachedIcon ? state.cachedIcon.cloneNode(true) : null);
 
-        // 2段センタリング構造:
-        // 各カラムを flex-direction:column; align-items:center にすることで、
-        // 上段ラベルと下段数値が常に中央揃えになり、数値が「0」の場合もラベル幅の中でセンタリングされる
-        container.innerHTML = `
+            // targetEl の既存テキスト（元の合算値テキストなど）をクリア
+            targetEl.innerHTML = '';
+
+            container = document.createElement('div');
+            container.className = 'anlas-viewer-container';
+            container.dataset.fixed = formattedFixed;
+            container.dataset.purchased = formattedPurchased;
+            container.style.cssText = [
+              'display: inline-flex',
+              'align-items: center',
+              'gap: 8px',
+              'user-select: none',
+              'line-height: 1.15',
+              'vertical-align: middle',
+              'padding: 1px 0'
+            ].join(';');
+
+            // 2段センタリング構造:
+            // 各カラムを flex-direction:column; align-items:center にすることで、
+            // 上段ラベルと下段数値が常に中央揃えになり、数値が「0」の場合もラベル幅の中でセンタリングされる
+            container.innerHTML = `
           <div class="anlas-col" style="display:inline-flex; flex-direction:column; align-items:center; justify-content:center; min-width:0;">
             <span style="font-size:0.68em; line-height:1.1; font-weight:500; opacity:0.75; letter-spacing:0.04em;">定期</span>
             <span class="anlas-val-fixed" style="font-size:0.95em; line-height:1.2; font-weight:700;">${formattedFixed}</span>
@@ -315,214 +317,222 @@
           </div>
         `;
 
-        if (iconClone) {
-          const iconWrapper = document.createElement('span');
-          iconWrapper.style.cssText = 'display:inline-flex; align-items:center; margin-left:2px;';
-          iconWrapper.appendChild(iconClone);
-          container.appendChild(iconWrapper);
+            if (iconClone) {
+              const iconWrapper = document.createElement('span');
+              iconWrapper.style.cssText = 'display:inline-flex; align-items:center; margin-left:2px;';
+              iconWrapper.appendChild(iconClone);
+              container.appendChild(iconWrapper);
+            }
+
+            targetEl.appendChild(container);
+          }
+        } finally {
+          Promise.resolve().then(() => {
+            state.isMutating = false;
+          });
         }
 
-        targetEl.appendChild(container);
+        return true;
       }
-    } finally {
-      Promise.resolve().then(() => {
-        state.isMutating = false;
-      });
-    }
-
-    return true;
-  }
 
   /**
    * APIから残高を取得してDOMへ反映
    * @param {boolean} silent trueの場合は残高に変動がない限りログ出力を抑制
    */
   async function updateAnlasData(silent = false) {
-    if (state.fetching) return false;
+        if (state.fetching) return false;
 
-    const token = getAuthToken();
-    if (!token) {
-      console.error('[AnlasViewer] エラー: 認証トークン（auth_token）を取得できませんでした。NovelAIにログインしているか確認してください。');
-      return false;
-    }
+        const token = getAuthToken();
+        if (!token) {
+          console.error('[AnlasViewer] エラー: 認証トークン（auth_token）を取得できませんでした。NovelAIにログインしているか確認してください。');
+          return false;
+        }
 
-    state.fetching = true;
-    state.lastFetchedAt = Date.now();
-    try {
-      const { fixed, purchased } = await fetchAnlasInfo(token);
+        state.fetching = true;
+        state.lastFetchedAt = Date.now();
+        try {
+          const { fixed, purchased } = await fetchAnlasInfo(token);
 
-      const isChanged = (state.fixed !== null && (state.fixed !== fixed || state.purchased !== purchased));
-      state.fixed = fixed;
-      state.purchased = purchased;
-      state.failCount = 0;
+          const isChanged = (state.fixed !== null && (state.fixed !== fixed || state.purchased !== purchased));
+          state.fixed = fixed;
+          state.purchased = purchased;
+          state.failCount = 0;
 
-      renderAnlasView();
-
-      // 残高が変わった場合、または手動実行時は必ずログを出力
-      if (!silent || isChanged) {
-        console.info(`[AnlasViewer] 残高更新: 定期 = ${fixed.toLocaleString()}, 有償 = ${purchased.toLocaleString()} (合計 = ${(fixed + purchased).toLocaleString()})`);
-      }
-      return true;
-    } catch (err) {
-      state.failCount++;
-      console.error('[AnlasViewer] エラー: APIからのAnlas情報取得に失敗しました:', err.message);
-      return false;
-    } finally {
-      state.fetching = false;
-    }
-  }
-
-  // 外部からの再取得トリガーとして公開
-  window.anlasViewerRefresh = () => updateAnlasData(false);
-
-  /**
-   * MutationObserver用コールバック（SPAの再描画追従）
-   */
-  function handleMutations() {
-    if (state.isMutating) return;
-
-    if (state.debounceTimer) {
-      clearTimeout(state.debounceTimer);
-    }
-
-    state.debounceTimer = setTimeout(() => {
-      const el = findAnlasElement();
-      if (!el) return;
-
-      // 画面上に生の「Anlas:」が出現しているか、またはコンテナが外れた（Reactが再描画した）か判定
-      const text = el.textContent || '';
-      const hasContainer = !!el.querySelector('.anlas-viewer-container');
-      const isReverted = /Anlas\s*:/i.test(text) || !hasContainer || !text.includes('定期');
-
-      if (isReverted) {
-        // Reactの再描画を検知した場合、直近2秒以内にフェッチしていなければAPIから最新残高を再取得
-        const now = Date.now();
-        const interval = Math.min(2000 * Math.pow(2, state.failCount), 60000);
-        if (now - state.lastFetchedAt > interval) {
-          updateAnlasData(true);
-        } else {
-          // 直近であればキャッシュ値で即座に書き戻す
           renderAnlasView();
-        }
-      } else {
-        renderAnlasView();
-      }
-    }, 50);
-  }
 
-  /**
-   * fetchのインターセプト（画像生成やAI操作の完了を自動検知して残高を再取得）
-   */
-  function setupFetchInterceptor() {
-    if (typeof window.fetch !== 'function') return;
-
-    const originalFetch = window.fetch;
-    state.originalFetch = originalFetch;
-
-    window.fetch = async function (...args) {
-      const response = await originalFetch.apply(this, args);
-
-      try {
-        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-        // 画像生成・AI処理関連のリクエスト完了を検知
-        if (url && (url.includes('/generate') || url.includes('/ai/') || url.includes('/image'))) {
-          // 当スクリプト自身のAnlas取得リクエストは除外
-          if (!url.includes('/user/subscription') && !url.includes('/user/data')) {
-            // 画像生成完了後、少し待ってから残高を最新化
-            setTimeout(() => {
-              updateAnlasData(true);
-            }, 600);
+          // 残高が変わった場合、または手動実行時は必ずログを出力
+          if (!silent || isChanged) {
+            console.info(`[AnlasViewer] 残高更新: 定期 = ${fixed.toLocaleString()}, 有償 = ${purchased.toLocaleString()} (合計 = ${(fixed + purchased).toLocaleString()})`);
           }
-        }
-      } catch (_) {}
-
-      return response;
-    };
-  }
-
-  /**
-   * タブ切り替え（visibilitychange）時の自動更新
-   */
-  function setupVisibilityListener() {
-    state.visibilityListener = () => {
-      if (document.visibilityState === 'visible') {
-        const now = Date.now();
-        if (now - state.lastFetchedAt > 3000) {
-          updateAnlasData(true);
+          return true;
+        } catch (err) {
+          state.failCount++;
+          console.error('[AnlasViewer] エラー: APIからのAnlas情報取得に失敗しました:', err.message);
+          return false;
+        } finally {
+          state.fetching = false;
         }
       }
-    };
-    document.addEventListener('visibilitychange', state.visibilityListener);
-  }
 
-  /**
-   * 初期化処理
-   */
-  async function init() {
-    console.info('[AnlasViewer] 起動中...');
+      // 外部からの再取得トリガーとして公開
+      window.anlasViewerRefresh = () => updateAnlasData(false);
 
-    // 初回データ取得（失敗したら常駐せずに中断）
-    const ok = await updateAnlasData(false);
-    if (!ok) {
-      console.error('[AnlasViewer] 初回取得に失敗したため処理を中断しました。上記のエラー内容を確認してください。');
-      window.anlasViewerActive = false;
-      return;
-    }
+      /**
+       * MutationObserver用コールバック（SPAの再描画追従）
+       */
+      function handleMutations() {
+        if (state.isMutating) return;
 
-    // 1. MutationObserverでDOMの変更（SPAの画面遷移・再描画）を監視
-    state.observer = new MutationObserver(handleMutations);
-    state.observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+        if (state.debounceTimer) {
+          clearTimeout(state.debounceTimer);
+        }
 
-    // 2. 画像生成APIの完了を検知するfetchインターセプトを設定
-    setupFetchInterceptor();
+        state.debounceTimer = setTimeout(() => {
+          const el = findAnlasElement();
+          if (!el) return;
 
-    // 3. タブ復帰時の自動同期を設定
-    setupVisibilityListener();
+          // 画面上に生の「Anlas:」が出現しているか、またはコンテナが外れた（Reactが再描画した）か判定
+          const text = el.textContent || '';
+          const hasContainer = !!el.querySelector('.anlas-viewer-container');
+          const isReverted = /Anlas\s*:/i.test(text) || !hasContainer || !text.includes('定期');
 
-    console.info('[AnlasViewer] 常駐完了: ヘッダーのAnlas監視を開始しました。（表示をクリックで手動更新も可能）');
-  }
-
-  // 停止・リソース解除用関数（デバッグ・保守用）
-  window.anlasViewerCleanup = () => {
-    if (state.observer) {
-      state.observer.disconnect();
-      state.observer = null;
-    }
-    if (state.debounceTimer) {
-      clearTimeout(state.debounceTimer);
-    }
-    if (state.originalFetch) {
-      window.fetch = state.originalFetch;
-      state.originalFetch = null;
-    }
-    if (state.visibilityListener) {
-      document.removeEventListener('visibilitychange', state.visibilityListener);
-      state.visibilityListener = null;
-    }
-    const tagged = document.querySelector('[data-anlas-view="true"]');
-    if (tagged) {
-      if (tagged._anlasClickHandler) {
-        tagged.removeEventListener('click', tagged._anlasClickHandler);
-        delete tagged._anlasClickHandler;
+          if (isReverted) {
+            // Reactの再描画を検知した場合、直近2秒以内にフェッチしていなければAPIから最新残高を再取得
+            const now = Date.now();
+            const interval = Math.min(2000 * Math.pow(2, state.failCount), 60000);
+            if (now - state.lastFetchedAt > interval) {
+              updateAnlasData(true);
+            } else {
+              // 直近であればキャッシュ値で即座に書き戻す
+              renderAnlasView();
+            }
+          } else {
+            renderAnlasView();
+          }
+        }, 50);
       }
-      tagged.removeAttribute('data-anlas-view');
-      tagged.title = '';
-      tagged.style.cursor = '';
-    }
-    // 非表示にした元の合算値要素を復元
-    document.querySelectorAll('[data-anlas-hidden="true"]').forEach(el => {
-      el.style.display = '';
-      el.removeAttribute('data-anlas-hidden');
-    });
-    window.anlasViewerActive = false;
-    delete window.anlasViewerRefresh;
-    delete window.anlasViewerCleanup;
-    console.info('[AnlasViewer] 監視を停止し、リソースを解除しました。');
-  };
 
-  init();
-})();
+      /**
+       * fetchのインターセプト（画像生成やAI操作の完了を自動検知して残高を再取得）
+       */
+      function setupFetchInterceptor() {
+        if (typeof window.fetch !== 'function') return;
+
+        const originalFetch = window.fetch;
+        state.originalFetch = originalFetch;
+
+        window.fetch = async function (...args) {
+          const response = await originalFetch.apply(this, args);
+
+          try {
+            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+            // 画像生成・AI処理関連のリクエスト完了を検知
+            if (url && (url.includes('/generate') || url.includes('/ai/') || url.includes('/image'))) {
+              // 当スクリプト自身のAnlas取得リクエストは除外
+              if (!url.includes('/user/subscription') && !url.includes('/user/data')) {
+                // 画像生成完了後、少し待ってから残高を最新化
+                setTimeout(() => {
+                  updateAnlasData(true);
+                }, 600);
+              }
+            }
+          } catch (_) { }
+
+          return response;
+        };
+      }
+
+      /**
+       * タブ切り替え（visibilitychange）時の自動更新
+       */
+      function setupVisibilityListener() {
+        state.visibilityListener = () => {
+          if (document.visibilityState === 'visible') {
+            const now = Date.now();
+            if (now - state.lastFetchedAt > 3000) {
+              updateAnlasData(true);
+            }
+          }
+        };
+        document.addEventListener('visibilitychange', state.visibilityListener);
+      }
+
+      /**
+       * 初期化処理
+       */
+      async function init() {
+        console.info('[AnlasViewer] 起動中...');
+
+        // 以前の実行で誤って非表示になった要素（購入モーダル等）があれば復元
+        document.querySelectorAll('[data-anlas-hidden="true"]').forEach(el => {
+          if (el.closest('[role="dialog"], .modal, [class*="modal"], [class*="popup"]') || /Purchase|購入|USD/i.test(el.textContent)) {
+            el.style.display = '';
+            el.removeAttribute('data-anlas-hidden');
+          }
+        });
+
+        // 初回データ取得（失敗したら常駐せずに中断）
+        const ok = await updateAnlasData(false);
+        if (!ok) {
+          console.error('[AnlasViewer] 初回取得に失敗したため処理を中断しました。上記のエラー内容を確認してください。');
+          window.anlasViewerActive = false;
+          return;
+        }
+
+        // 1. MutationObserverでDOMの変更（SPAの画面遷移・再描画）を監視
+        state.observer = new MutationObserver(handleMutations);
+        state.observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          characterData: true
+        });
+
+        // 2. 画像生成APIの完了を検知するfetchインターセプトを設定
+        setupFetchInterceptor();
+
+        // 3. タブ復帰時の自動同期を設定
+        setupVisibilityListener();
+
+        console.info('[AnlasViewer] 常駐完了: ヘッダーのAnlas監視を開始しました。（表示をクリックで手動更新も可能）');
+      }
+
+      // 停止・リソース解除用関数（デバッグ・保守用）
+      window.anlasViewerCleanup = () => {
+        if (state.observer) {
+          state.observer.disconnect();
+          state.observer = null;
+        }
+        if (state.debounceTimer) {
+          clearTimeout(state.debounceTimer);
+        }
+        if (state.originalFetch) {
+          window.fetch = state.originalFetch;
+          state.originalFetch = null;
+        }
+        if (state.visibilityListener) {
+          document.removeEventListener('visibilitychange', state.visibilityListener);
+          state.visibilityListener = null;
+        }
+        const tagged = document.querySelector('[data-anlas-view="true"]');
+        if (tagged) {
+          if (tagged._anlasClickHandler) {
+            tagged.removeEventListener('click', tagged._anlasClickHandler);
+            delete tagged._anlasClickHandler;
+          }
+          tagged.removeAttribute('data-anlas-view');
+          tagged.title = '';
+          tagged.style.cursor = '';
+        }
+        // 非表示にした元の合算値要素を復元
+        document.querySelectorAll('[data-anlas-hidden="true"]').forEach(el => {
+          el.style.display = '';
+          el.removeAttribute('data-anlas-hidden');
+        });
+        window.anlasViewerActive = false;
+        delete window.anlasViewerRefresh;
+        delete window.anlasViewerCleanup;
+        console.info('[AnlasViewer] 監視を停止し、リソースを解除しました。');
+      };
+
+      init();
+    }) ();
